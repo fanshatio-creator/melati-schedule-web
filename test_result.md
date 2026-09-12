@@ -149,6 +149,20 @@ backend:
         -working: true
         -agent: "testing"
         -comment: "All 13 test cases passed successfully. (1) GET /api/izin/jenis correctly returns ['Sakit', 'Izin', 'Cuti', 'Dinas Luar', 'Lainnya']. (2) GET /api/izin returns array with pegawai_nama enriched. (3) POST /api/izin with valid data creates izin with status='menunggu'. (4) POST /api/izin correctly rejects invalid jenis with 400. (5) POST /api/izin correctly rejects invalid date range (selesai < mulai) with 400. (6) POST /api/izin correctly rejects non-existent pegawai_id with 404. (7) POST /api/izin/{id}/approval: (7a) Kepala TU approval sets status='disetujui' (200), (7b) invalid approver 'Petugas/Staf' returns 403, (7c) invalid aksi returns 400, (7d) non-existent ID returns 404. (8) GET /api/dashboard correctly includes izin & menunggu_izin integer counts, each ruangan has izin array, and approved pegawai appears in izin bucket (not di_dalam/di_luar). (9) DELETE /api/izin/{id} successfully deletes (200), second delete returns 404. All endpoints working correctly with proper validation and error handling."
+  - task: "Izin monthly recap endpoints (GET /api/izin/rekap and /api/izin/rekap/excel)"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: "Added GET /api/izin/rekap?year=X&month=Y&status=Z (defaults to disetujui) and GET /api/izin/rekap/excel for Excel export. Returns monthly summary with per-pegawai breakdown by jenis (Sakit, Izin, Cuti, Dinas Luar, Lainnya), totals, and day counting logic that clips izin date ranges to the specified month."
+        -working: true
+        -agent: "testing"
+        -comment: "All 5 test cases passed successfully. (1) GET /api/izin/rekap?year=2026&month=9 (default status=disetujui) returns correct structure with keys: year, month, status=='disetujui', jenis (list of 5 types), rows (array with pegawai_id, nama, nip, jabatan, per_jenis object, total), totals (object with each jenis + total). Verified totals.total == sum of all row totals and per-jenis totals match. (2) GET /api/izin/rekap?year=2026&month=9&status=semua returns status='semua', includes non-rejected izin (status != ditolak), row count (2) >= disetujui-only count (1). (3) GET /api/izin/rekap?year=2026&month=13 correctly returns 400 with 'Bulan tidak valid'. (4) GET /api/izin/rekap/excel?year=2026&month=9 returns 200 with correct Content-Type (application/vnd.openxmlformats-officedocument.spreadsheetml.sheet), Content-Disposition with filename rekap-izin-2026-09.xlsx, body length 5481 bytes. (5) Day counting logic verified: created izin spanning 2026-08-30 to 2026-09-02 (4 days total), approved it, confirmed rekap for September shows exactly 2 days (Sep 1-2) for that pegawai, demonstrating correct month clipping. Test data cleaned up. All endpoints working correctly."
 
 frontend:
   - task: "Izin (leave request) feature: page + dashboard integration"
@@ -177,12 +191,12 @@ frontend:
 metadata:
   created_by: "main_agent"
   version: "1.0"
-  test_sequence: 1
+  test_sequence: 2
   run_ui: false
 
 test_plan:
   current_focus:
-    - "Izin (leave request) endpoints + dashboard integration"
+    - "Izin monthly recap endpoints (GET /api/izin/rekap and /api/izin/rekap/excel)"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
@@ -194,3 +208,5 @@ agent_communication:
     -message: "Backend testing completed successfully. All 21 test cases passed (12 PIN auth tests + 9 matrix tests). Both features are working correctly: (1) PIN authentication endpoints handle all scenarios properly - correct/wrong PINs, PIN changes, validation, and non-PIN roles. PINs restored to defaults after testing. (2) Matrix endpoint returns correct structure with all required fields and proper validation. No issues found. Both backend tasks marked as working:true and needs_retesting:false."
     -agent: "testing"
     -message: "Izin (leave request) backend feature testing completed successfully. All 13 test cases passed covering all 9 required scenarios. All endpoints working correctly: GET /api/izin/jenis returns correct list, GET /api/izin enriches pegawai_nama, POST /api/izin creates with proper validation (jenis, date range, pegawai existence), approval endpoint handles all scenarios (valid approval, invalid approver 403, invalid aksi 400, non-existent ID 404), dashboard integration correctly shows izin counts and buckets, DELETE works with proper 404 on re-delete. No issues found. Task marked as working:true and needs_retesting:false."
+    -agent: "testing"
+    -message: "Izin monthly recap endpoints testing completed successfully. All 5 test cases passed: (1) GET /api/izin/rekap?year=2026&month=9 (default status=disetujui) returns correct structure with all required keys (year, month, status, jenis, rows, totals), verified totals calculations match sum of rows. (2) GET /api/izin/rekap?year=2026&month=9&status=semua includes non-rejected izin (2 rows vs 1 disetujui-only row). (3) GET /api/izin/rekap?year=2026&month=13 correctly returns 400 for invalid month. (4) GET /api/izin/rekap/excel?year=2026&month=9 returns Excel file with correct Content-Type, filename (rekap-izin-2026-09.xlsx), and non-zero body (5481 bytes). (5) Day counting logic verified: created test izin spanning 2026-08-30 to 2026-09-02, approved it, confirmed September rekap shows exactly 2 days (Sep 1-2), demonstrating correct month clipping. Test data cleaned up. All endpoints working correctly. Task marked as working:true and needs_retesting:false."

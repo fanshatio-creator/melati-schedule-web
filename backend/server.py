@@ -1030,6 +1030,150 @@ async def approval_izin(iid: str, input: IzinApprovalInput):
     return await db.izin.find_one({"id": iid}, {"_id": 0})
 
 
+def _hitung_hari_izin(iz, month_start, month_end):
+    """Jumlah hari izin yang jatuh di dalam rentang bulan (inklusif)."""
+    mulai = max(iz["tanggal_mulai"], month_start)
+    selesai = min(iz["tanggal_selesai"], month_end)
+    if selesai < mulai:
+        return 0
+    d0 = datetime.strptime(mulai, "%Y-%m-%d").date()
+    d1 = datetime.strptime(selesai, "%Y-%m-%d").date()
+    return (d1 - d0).days + 1
+
+
+async def _build_rekap(year, month, status):
+    if month < 1 or month > 12:
+        raise HTTPException(400, "Bulan tidak valid")
+    ndays = calendar.monthrange(year, month)[1]
+    month_start = date(year, month, 1).isoformat()
+    month_end = date(year, month, ndays).isoformat()
+
+    query = {
+        "tanggal_mulai": {"$lte": month_end},
+        "tanggal_selesai": {"$gte": month_start},
+    }
+    if status == "disetujui":
+        query["status"] = "disetujui"
+    else:
+        query["status"] = {"$ne": "ditolak"}
+
+    izin_docs = await db.izin.find(query, {"_id": 0}).to_list(5000)
+    pids = list({d.get("pegawai_id") for d in izin_docs if d.get("pegawai_id")})
+    plist = await db.pegawai.find({"id": {"$in": pids}}, {"_id": 0}).to_list(5000) if pids else []
+    pmap = {p["id"]: p for p in plist}
+
+    per_peg = {}
+    for iz in izin_docs:
+        pid = iz.get("pegawai_id")
+        hari = _hitung_hari_izin(iz, month_start, month_end)
+        if hari <= 0:
+            continue
+        jenis = iz.get("jenis", "Lainnya")
+        if jenis not in JENIS_IZIN:
+            jenis = "Lainnya"
+        row = per_peg.setdefault(pid, {jj: 0 for jj in JENIS_IZIN})
+        row[jenis] += hari
+
+    rows = []
+    totals = {jj: 0 for jj in JENIS_IZIN}
+    for pid, per_jenis in per_peg.items():
+        p = pmap.get(pid, {})
+        total = sum(per_jenis.values())
+        for jj in JENIS_IZIN:
+            totals[jj] += per_jenis[jj]
+        rows.append({
+            "pegawai_id": pid,
+            "nama": p.get("nama", "(pegawai dihapus)"),
+            "nip": p.get("nip", ""),
+            "jabatan": p.get("jabatan", ""),
+            "per_jenis": per_jenis,
+            "total": total,
+        })
+    rows.sort(key=lambda r: r["nama"])
+    totals["total"] = sum(totals.values())
+    return {
+        "year": year,
+        "month": month,
+        "status": status,
+        "jenis": JENIS_IZIN,
+        "rows": rows,
+        "totals": totals,
+    }
+
+
+@api_router.get("/izin/rekap")
+async def izin_rekap(year: int, month: int, status: str = "disetujui"):
+    return await _build_rekap(year, month, status)
+
+
+@api_router.get("/izin/rekap/excel")
+async def izin_rekap_excel(year: int, month: int, status: str = "disetujui"):
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
+
+    data = await _build_rekap(year, month, status)
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Rekap Izin"
+
+    thin = Side(style="thin", color="CBD5E1")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    head_fill = PatternFill("solid", fgColor="059669")
+    head_font = Font(bold=True, color="FFFFFF")
+    center = Alignment(horizontal="center", vertical="center")
+
+    label_status = "Disetujui" if status == "disetujui" else "Semua (kecuali ditolak)"
+    ws.merge_cells("A1:H1")
+    ws["A1"] = f"REKAP IZIN TIDAK HADIR — {BULAN_ID[month - 1]} {year}"
+    ws["A1"].font = Font(bold=True, size=14)
+    ws.merge_cells("A2:H2")
+    ws["A2"] = f"Status: {label_status}"
+    ws["A2"].font = Font(italic=True, color="64748B")
+
+    headers = ["No", "NIP", "Nama Pegawai", "Jabatan"] + JENIS_IZIN + ["Total Hari"]
+    hr = 4
+    for ci, h in enumerate(headers, start=1):
+        c = ws.cell(row=hr, column=ci, value=h)
+        c.fill = head_fill
+        c.font = head_font
+        c.alignment = center
+        c.border = border
+
+    r = hr + 1
+    for i, row in enumerate(data["rows"], start=1):
+        vals = [i, row["nip"], row["nama"], row["jabatan"]] + [row["per_jenis"][jj] for jj in JENIS_IZIN] + [row["total"]]
+        for ci, v in enumerate(vals, start=1):
+            c = ws.cell(row=r, column=ci, value=v)
+            c.border = border
+            if ci >= 5:
+                c.alignment = center
+        r += 1
+
+    # totals row
+    t = data["totals"]
+    tvals = ["", "", "TOTAL", ""] + [t[jj] for jj in JENIS_IZIN] + [t["total"]]
+    for ci, v in enumerate(tvals, start=1):
+        c = ws.cell(row=r, column=ci, value=v)
+        c.border = border
+        c.font = Font(bold=True)
+        if ci >= 5:
+            c.alignment = center
+
+    widths = [5, 22, 34, 26] + [11] * len(JENIS_IZIN) + [12]
+    for ci, w in enumerate(widths, start=1):
+        ws.column_dimensions[ws.cell(row=hr, column=ci).column_letter].width = w
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    fname = f"rekap-izin-{year}-{str(month).zfill(2)}.xlsx"
+    return Response(
+        content=buf.read(),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
+
+
 # ---------- DASHBOARD ----------
 @api_router.get("/dashboard")
 async def dashboard(tanggal: str = ""):

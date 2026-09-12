@@ -1,15 +1,18 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useContext } from "react";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
-import { Plus, Upload, Pencil, Trash2, FileSpreadsheet, X, Download } from "lucide-react";
+import { Plus, Upload, Pencil, Trash2, FileSpreadsheet, X, Download, Lock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { RoleContext, canEditPegawai } from "@/App";
 
 const EMPTY = { nip: "", nama: "", jabatan: "", ruangan_id: "", telepon: "", status_kepegawaian: "" };
 
 export default function Pegawai() {
+  const { role } = useContext(RoleContext);
+  const canEdit = canEditPegawai(role);
   const [pegawai, setPegawai] = useState([]);
   const [ruangan, setRuangan] = useState([]);
   const [formOpen, setFormOpen] = useState(false);
@@ -97,12 +100,20 @@ export default function Pegawai() {
           <p className="text-sm text-slate-500 mt-1">{pegawai.length} pegawai terdaftar</p>
         </div>
         <div className="flex gap-2">
-          <Button variant="outline" onClick={() => { setImportOpen(true); setPreview(null); setSkipped([]); }} data-testid="btn-import-pegawai">
-            <Upload size={16} className="mr-2" /> Import Excel/PDF/Word
-          </Button>
-          <Button onClick={openAdd} className="bg-emerald-600 hover:bg-emerald-700" data-testid="btn-tambah-pegawai">
-            <Plus size={16} className="mr-2" /> Tambah Pegawai
-          </Button>
+          {canEdit ? (
+            <>
+              <Button variant="outline" onClick={() => { setImportOpen(true); setPreview(null); setSkipped([]); }} data-testid="btn-import-pegawai">
+                <Upload size={16} className="mr-2" /> Import Excel/PDF/Word
+              </Button>
+              <Button onClick={openAdd} className="bg-emerald-600 hover:bg-emerald-700" data-testid="btn-tambah-pegawai">
+                <Plus size={16} className="mr-2" /> Tambah Pegawai
+              </Button>
+            </>
+          ) : (
+            <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-50 border border-amber-200 text-amber-700 text-xs font-medium" data-testid="pegawai-readonly-badge">
+              <Lock size={14} /> Mode lihat saja — hanya Kepala TU / Kepala Puskesmas yang dapat mengubah data
+            </div>
+          )}
         </div>
       </div>
 
@@ -117,7 +128,7 @@ export default function Pegawai() {
                 <th className="px-5 py-3 font-semibold">Ruangan</th>
                 <th className="px-5 py-3 font-semibold">Telepon</th>
                 <th className="px-5 py-3 font-semibold">Status</th>
-                <th className="px-5 py-3 font-semibold text-right">Aksi</th>
+                {canEdit && <th className="px-5 py-3 font-semibold text-right">Aksi</th>}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -131,18 +142,20 @@ export default function Pegawai() {
                   <td className="px-5 py-3">
                     <span className="text-xs px-2 py-1 rounded-full bg-slate-100 text-slate-600">{p.status_kepegawaian || "-"}</span>
                   </td>
-                  <td className="px-5 py-3 text-right">
-                    <button onClick={() => openEdit(p)} className="p-1.5 text-slate-400 hover:text-emerald-600 transition-colors" data-testid={`edit-pegawai-${p.nip || p.id}`}>
-                      <Pencil size={15} />
-                    </button>
-                    <button onClick={() => hapus(p)} className="p-1.5 text-slate-400 hover:text-rose-600 transition-colors" data-testid={`delete-pegawai-${p.nip || p.id}`}>
-                      <Trash2 size={15} />
-                    </button>
-                  </td>
+                  {canEdit && (
+                    <td className="px-5 py-3 text-right">
+                      <button onClick={() => openEdit(p)} className="p-1.5 text-slate-400 hover:text-emerald-600 transition-colors" data-testid={`edit-pegawai-${p.nip || p.id}`}>
+                        <Pencil size={15} />
+                      </button>
+                      <button onClick={() => hapus(p)} className="p-1.5 text-slate-400 hover:text-rose-600 transition-colors" data-testid={`delete-pegawai-${p.nip || p.id}`}>
+                        <Trash2 size={15} />
+                      </button>
+                    </td>
+                  )}
                 </tr>
               ))}
               {pegawai.length === 0 && (
-                <tr><td colSpan={7} className="px-5 py-8 text-center text-slate-400" data-testid="pegawai-empty">Belum ada pegawai. Tambah manual atau import dari file.</td></tr>
+                <tr><td colSpan={canEdit ? 7 : 6} className="px-5 py-8 text-center text-slate-400" data-testid="pegawai-empty">Belum ada pegawai. Tambah manual atau import dari file.</td></tr>
               )}
             </tbody>
           </table>

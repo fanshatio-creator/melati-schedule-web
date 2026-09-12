@@ -8,13 +8,17 @@ import Pegawai from "@/pages/Pegawai";
 import Jadwal from "@/pages/Jadwal";
 import Approval from "@/pages/Approval";
 import Kalender from "@/pages/Kalender";
+import Matriks from "@/pages/Matriks";
 
 export const RoleContext = createContext({ role: "Kepala TU", setRole: () => {} });
 
-export const ROLES = ["Petugas / Staf", "Kepala TU", "Kepala Puskesmas"];
+export const ROLES = ["Petugas / Staf", "Pelaksana", "Kepala TU", "Kepala Puskesmas"];
+export const PIN_ROLES = ["Kepala TU", "Kepala Puskesmas"];
+export const canEditPegawai = (role) => PIN_ROLES.includes(role);
+export const isPinRole = (role) => PIN_ROLES.includes(role);
 
 function App() {
-  const [role, setRole] = useState(() => localStorage.getItem("puskesmas-role") || "Kepala TU");
+  const [role, setRole] = useState(() => localStorage.getItem("puskesmas-role") || "Petugas / Staf");
   const changeRole = (r) => {
     setRole(r);
     localStorage.setItem("puskesmas-role", r);
@@ -31,6 +35,7 @@ function App() {
               <Route path="jadwal" element={<Jadwal />} />
               <Route path="approval" element={<Approval />} />
               <Route path="kalender" element={<Kalender />} />
+              <Route path="matriks" element={<Matriks />} />
             </Route>
           </Routes>
         </BrowserRouter>

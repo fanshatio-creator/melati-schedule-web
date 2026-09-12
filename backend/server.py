@@ -284,6 +284,29 @@ class ApprovalInput(BaseModel):
     catatan: Optional[str] = ""
 
 
+PIN_ROLES = ["Kepala TU", "Kepala Puskesmas"]
+DEFAULT_PINS = {"Kepala TU": "1234", "Kepala Puskesmas": "4321"}
+
+
+class VerifyPinInput(BaseModel):
+    role: str
+    pin: str
+
+
+class ChangePinInput(BaseModel):
+    role: str
+    pin_lama: str
+    pin_baru: str
+
+
+async def get_pins():
+    doc = await db.app_settings.find_one({"key": "pins"}, {"_id": 0})
+    if not doc:
+        doc = {"key": "pins", "pins": dict(DEFAULT_PINS)}
+        await db.app_settings.insert_one(dict(doc))
+    return doc.get("pins", dict(DEFAULT_PINS))
+
+
 @api_router.get("/")
 async def root():
     return {"message": "API Jadwal Puskesmas aktif"}
@@ -463,6 +486,122 @@ async def approval_jadwal(jid: str, input: ApprovalInput):
         "waktu_approval": datetime.now(timezone.utc).isoformat(),
     }})
     return await db.jadwal.find_one({"id": jid}, {"_id": 0})
+
+
+# ---------- AUTH / PIN ----------
+@api_router.post("/auth/verify-pin")
+async def verify_pin(input: VerifyPinInput):
+    if input.role not in PIN_ROLES:
+        return {"ok": True}
+    pins = await get_pins()
+    if input.pin == pins.get(input.role, DEFAULT_PINS.get(input.role)):
+        return {"ok": True}
+    raise HTTPException(401, "PIN salah")
+
+
+@api_router.post("/auth/change-pin")
+async def change_pin(input: ChangePinInput):
+    if input.role not in PIN_ROLES:
+        raise HTTPException(400, "Role ini tidak menggunakan PIN")
+    if len(input.pin_baru) < 4 or not input.pin_baru.isdigit():
+        raise HTTPException(400, "PIN baru harus berupa minimal 4 digit angka")
+    pins = await get_pins()
+    if input.pin_lama != pins.get(input.role, DEFAULT_PINS.get(input.role)):
+        raise HTTPException(401, "PIN lama salah")
+    pins[input.role] = input.pin_baru
+    await db.app_settings.update_one({"key": "pins"}, {"$set": {"pins": pins}}, upsert=True)
+    return {"ok": True, "message": "PIN berhasil diperbarui"}
+
+
+# ---------- MATRIKS / SINKRONISASI ----------
+@api_router.get("/jadwal/matrix")
+async def jadwal_matrix(year: int, month: int):
+    if month < 1 or month > 12:
+        raise HTTPException(400, "Bulan tidak valid")
+    ndays = calendar.monthrange(year, month)[1]
+    month_start = date(year, month, 1).isoformat()
+    month_end = date(year, month, ndays).isoformat()
+    hari = ["Sen", "Sel", "Rab", "Kam", "Jum", "Sab", "Min"]
+    dates = []
+    for d in range(1, ndays + 1):
+        dt = date(year, month, d)
+        dates.append({
+            "iso": dt.isoformat(),
+            "day": d,
+            "weekday": hari[dt.weekday()],
+            "is_weekend": dt.weekday() >= 5,
+        })
+
+    docs = await db.jadwal.find({
+        "status": {"$ne": "ditolak"},
+        "tanggal_mulai": {"$lte": month_end},
+        "tanggal_selesai": {"$gte": month_start},
+    }, {"_id": 0}).sort("tanggal_mulai", 1).to_list(2000)
+
+    pids = list({pid for d in docs for pid in d.get("pegawai_ids", [])})
+    plist = await db.pegawai.find({"id": {"$in": pids}}, {"_id": 0}).to_list(2000) if pids else []
+    pmap = {p["id"]: p for p in plist}
+
+    def in_range(iso_day, jd):
+        return jd["tanggal_mulai"] <= iso_day <= jd["tanggal_selesai"]
+
+    rows = []
+    conflicts = []
+    for pid in pids:
+        p = pmap.get(pid)
+        if not p:
+            continue
+        cells = {}
+        for dt in dates:
+            iso_day = dt["iso"]
+            acts = [{
+                "jadwal_id": j["id"],
+                "nama_kegiatan": j["nama_kegiatan"],
+                "lokasi": j.get("lokasi", ""),
+                "status": j.get("status", ""),
+            } for j in docs if pid in j.get("pegawai_ids", []) and in_range(iso_day, j)]
+            if acts:
+                cells[iso_day] = acts
+                if len(acts) > 1:
+                    conflicts.append({
+                        "tanggal": iso_day,
+                        "pegawai_id": pid,
+                        "pegawai_nama": p["nama"],
+                        "kegiatan": [a["nama_kegiatan"] for a in acts],
+                    })
+        if cells:
+            rows.append({
+                "id": pid,
+                "nama": p["nama"],
+                "jabatan": p.get("jabatan", ""),
+                "cells": cells,
+                "total": sum(len(v) for v in cells.values()),
+            })
+    rows.sort(key=lambda r: r["nama"])
+
+    kegiatan = []
+    for j in docs:
+        kegiatan.append({
+            "id": j["id"],
+            "nama_kegiatan": j["nama_kegiatan"],
+            "lokasi": j.get("lokasi", ""),
+            "status": j.get("status", ""),
+            "koordinator": j.get("koordinator", ""),
+            "tanggal_mulai": j["tanggal_mulai"],
+            "tanggal_selesai": j["tanggal_selesai"],
+            "pegawai": [{"id": pid, "nama": pmap[pid]["nama"]} for pid in j.get("pegawai_ids", []) if pid in pmap],
+        })
+
+    return {
+        "year": year,
+        "month": month,
+        "dates": dates,
+        "rows": rows,
+        "kegiatan": kegiatan,
+        "conflicts": conflicts,
+        "total_pegawai_terjadwal": len(rows),
+        "total_kegiatan": len(kegiatan),
+    }
 
 
 @api_router.post("/jadwal/import/parse")

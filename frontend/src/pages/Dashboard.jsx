@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import { api, formatTanggal } from "@/lib/api";
-import { Building2, CarFront, Users, ClipboardCheck, CalendarDays } from "lucide-react";
+import { Building2, CarFront, Users, ClipboardCheck, CalendarDays, UserMinus } from "lucide-react";
 import { Input } from "@/components/ui/input";
 
 function StatCard({ icon: Icon, label, value, tone, testid }) {
@@ -9,6 +9,7 @@ function StatCard({ icon: Icon, label, value, tone, testid }) {
     emerald: "bg-emerald-100 text-emerald-700",
     amber: "bg-amber-100 text-amber-700",
     blue: "bg-blue-100 text-blue-700",
+    rose: "bg-rose-100 text-rose-700",
   };
   return (
     <div className="bg-white border border-border rounded-xl p-5 flex items-center gap-4 animate-fade-slide" data-testid={testid}>
@@ -23,16 +24,20 @@ function StatCard({ icon: Icon, label, value, tone, testid }) {
   );
 }
 
-function PersonRow({ p, outside }) {
+function PersonRow({ p, outside, izin }) {
+  const dot = izin ? "bg-rose-500" : outside ? "bg-amber-500" : "bg-emerald-500";
   return (
     <div className="flex items-start gap-2 py-1.5" data-testid={`staff-item-${p.nip || p.id}`}>
-      <span className={`mt-1.5 w-2 h-2 rounded-full shrink-0 ${outside ? "bg-amber-500" : "bg-emerald-500"}`} />
+      <span className={`mt-1.5 w-2 h-2 rounded-full shrink-0 ${dot}`} />
       <div className="min-w-0">
         <p className="text-sm font-medium text-slate-800 truncate">{p.nama}</p>
         <p className="text-[11px] text-slate-500 truncate">
           {p.jabatan || "Staf"}
           {outside && p.kegiatan_luar?.length > 0 && (
             <span className="text-amber-700"> • {p.kegiatan_luar[0].kegiatan}{p.kegiatan_luar[0].lokasi ? ` @ ${p.kegiatan_luar[0].lokasi}` : ""}</span>
+          )}
+          {izin && p.izin && (
+            <span className="text-rose-700"> • {p.izin.jenis}{p.izin.status === "menunggu" ? " (menunggu)" : ""}{p.izin.alasan ? ` — ${p.izin.alasan}` : ""}</span>
           )}
         </p>
       </div>
@@ -80,10 +85,11 @@ export default function Dashboard() {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
         <StatCard icon={Users} label="Total Pegawai" value={data?.total_pegawai ?? "-"} tone="slate" testid="stat-total-pegawai" />
         <StatCard icon={Building2} label="Di Dalam Gedung" value={data?.di_dalam ?? "-"} tone="emerald" testid="stat-di-dalam" />
         <StatCard icon={CarFront} label="Tugas Luar Gedung" value={data?.di_luar ?? "-"} tone="amber" testid="stat-di-luar" />
+        <StatCard icon={UserMinus} label="Izin / Tidak Hadir" value={data?.izin ?? "-"} tone="rose" testid="stat-izin" />
         <StatCard icon={ClipboardCheck} label="Menunggu Approval" value={data?.menunggu_approval ?? "-"} tone="blue" testid="stat-menunggu-approval" />
       </div>
 
@@ -104,7 +110,7 @@ export default function Dashboard() {
                   <p className="text-[11px] text-slate-400 font-mono-code mt-0.5">{r.code} • {r.category}</p>
                 </div>
               </div>
-              <div className="flex gap-2 mb-3">
+              <div className="flex gap-2 mb-3 flex-wrap">
                 <span
                   className="text-[11px] font-semibold px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200"
                   data-testid={`status-badge-inside-${r.id}`}
@@ -117,20 +123,30 @@ export default function Dashboard() {
                 >
                   {r.di_luar.length} Tugas Luar
                 </span>
+                {r.izin?.length > 0 && (
+                  <span
+                    className="text-[11px] font-semibold px-2.5 py-1 rounded-full bg-rose-50 text-rose-700 border border-rose-200"
+                    data-testid={`status-badge-izin-${r.id}`}
+                  >
+                    {r.izin.length} Izin
+                  </span>
+                )}
               </div>
               <div className="divide-y divide-slate-50 max-h-44 overflow-y-auto">
-                {r.di_dalam.length === 0 && r.di_luar.length === 0 && (
+                {r.di_dalam.length === 0 && r.di_luar.length === 0 && (!r.izin || r.izin.length === 0) && (
                   <p className="text-xs text-slate-400 py-2">Belum ada pegawai di ruangan ini</p>
                 )}
+                {r.izin?.map((p) => <PersonRow key={p.id} p={p} izin />)}
                 {r.di_luar.map((p) => <PersonRow key={p.id} p={p} outside />)}
                 {r.di_dalam.map((p) => <PersonRow key={p.id} p={p} />)}
               </div>
             </div>
           ))}
-          {data?.tanpa_ruangan && (data.tanpa_ruangan.di_dalam.length > 0 || data.tanpa_ruangan.di_luar.length > 0) && (
+          {data?.tanpa_ruangan && (data.tanpa_ruangan.di_dalam.length > 0 || data.tanpa_ruangan.di_luar.length > 0 || data.tanpa_ruangan.izin?.length > 0) && (
             <div className="bg-white border border-dashed border-slate-300 rounded-xl p-5" data-testid="room-card-tanpa-ruangan">
               <h3 className="font-heading font-bold text-sm text-slate-900 mb-3">Belum Ditugaskan ke Ruangan</h3>
               <div className="divide-y divide-slate-50">
+                {data.tanpa_ruangan.izin?.map((p) => <PersonRow key={p.id} p={p} izin />)}
                 {data.tanpa_ruangan.di_luar.map((p) => <PersonRow key={p.id} p={p} outside />)}
                 {data.tanpa_ruangan.di_dalam.map((p) => <PersonRow key={p.id} p={p} />)}
               </div>

@@ -134,9 +134,34 @@ backend:
         -comment: "GET /api/jadwal/matrix?year=&month= returns dates[], rows[] (pegawai x tanggal with cells), kegiatan[], and conflicts[] (pegawai double-booked same date). Excludes rejected schedules."
         -working: true
         -agent: "testing"
-        -comment: "Tested matrix endpoint successfully. All 9 test cases passed: (1) GET /api/jadwal/matrix?year=2026&month=9 returns 200 with correct structure containing all required keys: year, month, dates, rows, kegiatan, conflicts, total_pegawai_terjadwal, total_kegiatan. (2) Dates array has correct length (30 days for September). (3) Date objects have correct structure with iso, day, weekday, is_weekend fields. (4) Rows array contains pegawai with cells structure. (5) Kegiatan and conflicts are arrays. (6) Totals are integers. (7) Invalid month values (0, 13) correctly return 400. Endpoint working correctly."
+        -comment: "9/9 cases passed."
+  - task: "Izin (leave request) endpoints + dashboard integration"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: "Added GET /api/izin, GET /api/izin/jenis, POST /api/izin (status=menunggu), DELETE /api/izin/{id}, POST /api/izin/{id}/approval. Dashboard now includes izin state (izin bucket per room, izin & menunggu_izin counts). Izin takes precedence over di_luar/di_dalam for a person on that date."
+        -working: true
+        -agent: "testing"
+        -comment: "All 13 test cases passed successfully. (1) GET /api/izin/jenis correctly returns ['Sakit', 'Izin', 'Cuti', 'Dinas Luar', 'Lainnya']. (2) GET /api/izin returns array with pegawai_nama enriched. (3) POST /api/izin with valid data creates izin with status='menunggu'. (4) POST /api/izin correctly rejects invalid jenis with 400. (5) POST /api/izin correctly rejects invalid date range (selesai < mulai) with 400. (6) POST /api/izin correctly rejects non-existent pegawai_id with 404. (7) POST /api/izin/{id}/approval: (7a) Kepala TU approval sets status='disetujui' (200), (7b) invalid approver 'Petugas/Staf' returns 403, (7c) invalid aksi returns 400, (7d) non-existent ID returns 404. (8) GET /api/dashboard correctly includes izin & menunggu_izin integer counts, each ruangan has izin array, and approved pegawai appears in izin bucket (not di_dalam/di_luar). (9) DELETE /api/izin/{id} successfully deletes (200), second delete returns 404. All endpoints working correctly with proper validation and error handling."
 
 frontend:
+  - task: "Izin (leave request) feature: page + dashboard integration"
+    implemented: true
+    working: "NA"
+    file: "frontend/src/pages/Izin.jsx, frontend/src/pages/Dashboard.jsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: "Frontend implemented; will be tested only after user approval."
   - task: "PIN login on role switch + Ganti PIN + read-only Pegawai + Matriks page"
     implemented: true
     working: "NA"
@@ -156,13 +181,16 @@ metadata:
   run_ui: false
 
 test_plan:
-  current_focus: []
+  current_focus:
+    - "Izin (leave request) endpoints + dashboard integration"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
 
 agent_communication:
     -agent: "main"
-    -message: "Please test the two new backend features only: (1) PIN auth verify-pin/change-pin with default PINs Kepala TU=1234 and Kepala Puskesmas=4321 — verify correct pin returns ok, wrong pin returns 401, change-pin rejects wrong old pin (401) and non-numeric/<4digit new pin (400), and after change the new pin verifies. IMPORTANT: after testing change-pin, restore PINs back to defaults. (2) GET /api/jadwal/matrix?year=2026&month=9 returns dates/rows/kegiatan/conflicts structure. Use REACT_APP_BACKEND_URL for base."
+    -message: "NEW: Please test ONLY the Izin (leave request) backend feature. Use REACT_APP_BACKEND_URL + /api. Cases: (1) GET /api/izin/jenis returns list [Sakit, Izin, Cuti, Dinas Luar, Lainnya]. (2) GET /api/izin returns array with pegawai_nama enriched. (3) POST /api/izin with valid {pegawai_id (use a real id from GET /api/pegawai), jenis:'Izin', tanggal_mulai:today, tanggal_selesai:today, alasan:'test'} returns 200 with status='menunggu'. (4) POST /api/izin with invalid jenis returns 400. (5) POST /api/izin with tanggal_selesai < tanggal_mulai returns 400. (6) POST /api/izin with non-existent pegawai_id returns 404. (7) POST /api/izin/{id}/approval with approver='Kepala TU', aksi='setujui' sets status='disetujui'; approver not in [Kepala TU, Kepala Puskesmas] returns 403; invalid aksi returns 400; non-existent id returns 404. (8) GET /api/dashboard returns keys izin (int) and menunggu_izin (int) and each ruangan has an 'izin' array; a pegawai with an approved/pending izin for that date appears in the room's izin bucket (not di_dalam/di_luar). (9) DELETE /api/izin/{id} removes it (404 if not found). Clean up any test izin you create."
     -agent: "testing"
     -message: "Backend testing completed successfully. All 21 test cases passed (12 PIN auth tests + 9 matrix tests). Both features are working correctly: (1) PIN authentication endpoints handle all scenarios properly - correct/wrong PINs, PIN changes, validation, and non-PIN roles. PINs restored to defaults after testing. (2) Matrix endpoint returns correct structure with all required fields and proper validation. No issues found. Both backend tasks marked as working:true and needs_retesting:false."
+    -agent: "testing"
+    -message: "Izin (leave request) backend feature testing completed successfully. All 13 test cases passed covering all 9 required scenarios. All endpoints working correctly: GET /api/izin/jenis returns correct list, GET /api/izin enriches pegawai_nama, POST /api/izin creates with proper validation (jenis, date range, pegawai existence), approval endpoint handles all scenarios (valid approval, invalid approver 403, invalid aksi 400, non-existent ID 404), dashboard integration correctly shows izin counts and buckets, DELETE works with proper 404 on re-delete. No issues found. Task marked as working:true and needs_retesting:false."

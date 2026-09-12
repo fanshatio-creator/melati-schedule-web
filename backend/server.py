@@ -307,6 +307,24 @@ async def get_pins():
     return doc.get("pins", dict(DEFAULT_PINS))
 
 
+JENIS_IZIN = ["Sakit", "Izin", "Cuti", "Dinas Luar", "Lainnya"]
+
+
+class IzinInput(BaseModel):
+    pegawai_id: str
+    jenis: str = "Izin"
+    tanggal_mulai: str
+    tanggal_selesai: str
+    alasan: str = ""
+    diajukan_oleh: str = ""
+
+
+class IzinApprovalInput(BaseModel):
+    aksi: str
+    approver: str
+    catatan: Optional[str] = ""
+
+
 @api_router.get("/")
 async def root():
     return {"message": "API Jadwal Puskesmas aktif"}
@@ -945,6 +963,73 @@ async def download_jadwal_template():
     )
 
 
+# ---------- IZIN / TIDAK HADIR ----------
+@api_router.get("/izin/jenis")
+async def izin_jenis():
+    return JENIS_IZIN
+
+
+@api_router.get("/izin")
+async def list_izin():
+    docs = await db.izin.find({}, {"_id": 0}).sort("tanggal_mulai", -1).to_list(2000)
+    pids = list({d.get("pegawai_id") for d in docs if d.get("pegawai_id")})
+    plist = await db.pegawai.find({"id": {"$in": pids}}, {"_id": 0}).to_list(2000) if pids else []
+    pmap = {p["id"]: p for p in plist}
+    for d in docs:
+        p = pmap.get(d.get("pegawai_id"))
+        d["pegawai_nama"] = p["nama"] if p else "(pegawai dihapus)"
+        d["pegawai_jabatan"] = p.get("jabatan", "") if p else ""
+    return docs
+
+
+@api_router.post("/izin")
+async def create_izin(input: IzinInput):
+    if input.jenis not in JENIS_IZIN:
+        raise HTTPException(400, "Jenis izin tidak valid")
+    if input.tanggal_selesai < input.tanggal_mulai:
+        raise HTTPException(400, "Tanggal selesai tidak boleh lebih awal dari tanggal mulai")
+    pegawai = await db.pegawai.find_one({"id": input.pegawai_id}, {"_id": 0})
+    if not pegawai:
+        raise HTTPException(404, "Pegawai tidak ditemukan")
+    doc = input.model_dump()
+    doc["id"] = str(uuid.uuid4())
+    doc["status"] = "menunggu"
+    doc["disetujui_oleh"] = ""
+    doc["catatan_approval"] = ""
+    doc["waktu_approval"] = ""
+    doc["created_at"] = datetime.now(timezone.utc).isoformat()
+    await db.izin.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api_router.delete("/izin/{iid}")
+async def delete_izin(iid: str):
+    res = await db.izin.delete_one({"id": iid})
+    if res.deleted_count == 0:
+        raise HTTPException(404, "Pengajuan izin tidak ditemukan")
+    return {"ok": True}
+
+
+@api_router.post("/izin/{iid}/approval")
+async def approval_izin(iid: str, input: IzinApprovalInput):
+    if input.aksi not in ("setujui", "tolak"):
+        raise HTTPException(400, "Aksi harus 'setujui' atau 'tolak'")
+    if input.approver not in ("Kepala TU", "Kepala Puskesmas"):
+        raise HTTPException(403, "Hanya Kepala TU atau Kepala Puskesmas yang dapat memberi persetujuan")
+    existing = await db.izin.find_one({"id": iid}, {"_id": 0})
+    if not existing:
+        raise HTTPException(404, "Pengajuan izin tidak ditemukan")
+    status = "disetujui" if input.aksi == "setujui" else "ditolak"
+    await db.izin.update_one({"id": iid}, {"$set": {
+        "status": status,
+        "disetujui_oleh": input.approver,
+        "catatan_approval": input.catatan or "",
+        "waktu_approval": datetime.now(timezone.utc).isoformat(),
+    }})
+    return await db.izin.find_one({"id": iid}, {"_id": 0})
+
+
 # ---------- DASHBOARD ----------
 @api_router.get("/dashboard")
 async def dashboard(tanggal: str = ""):
@@ -965,15 +1050,33 @@ async def dashboard(tanggal: str = ""):
                 "tanggal_mulai": j["tanggal_mulai"],
                 "tanggal_selesai": j["tanggal_selesai"],
             })
+    izin_hari_ini = await db.izin.find({
+        "status": {"$ne": "ditolak"},
+        "tanggal_mulai": {"$lte": tgl},
+        "tanggal_selesai": {"$gte": tgl},
+    }, {"_id": 0}).to_list(2000)
+    izin_map = {}
+    for iz in izin_hari_ini:
+        izin_map.setdefault(iz["pegawai_id"], {
+            "jenis": iz.get("jenis", "Izin"),
+            "alasan": iz.get("alasan", ""),
+            "status": iz.get("status", "menunggu"),
+            "tanggal_mulai": iz["tanggal_mulai"],
+            "tanggal_selesai": iz["tanggal_selesai"],
+        })
     rooms = []
-    di_dalam_total, di_luar_total = 0, 0
-    tanpa_ruangan = {"di_dalam": [], "di_luar": []}
-    per_room = {r["id"]: {"di_dalam": [], "di_luar": []} for r in RUANGAN}
+    di_dalam_total, di_luar_total, izin_total = 0, 0, 0
+    tanpa_ruangan = {"di_dalam": [], "di_luar": [], "izin": []}
+    per_room = {r["id"]: {"di_dalam": [], "di_luar": [], "izin": []} for r in RUANGAN}
     for p in pegawai:
         info = {"id": p["id"], "nip": p.get("nip", ""), "nama": p["nama"], "jabatan": p.get("jabatan", "")}
         rid = p.get("ruangan_id", "")
         bucket = per_room.get(rid)
-        if pid_luar := luar_map.get(p["id"]):
+        if iz := izin_map.get(p["id"]):
+            entry = {**info, "izin": iz}
+            (bucket["izin"] if bucket else tanpa_ruangan["izin"]).append(entry)
+            izin_total += 1
+        elif pid_luar := luar_map.get(p["id"]):
             entry = {**info, "kegiatan_luar": pid_luar}
             (bucket["di_luar"] if bucket else tanpa_ruangan["di_luar"]).append(entry)
             di_luar_total += 1
@@ -983,12 +1086,15 @@ async def dashboard(tanggal: str = ""):
     for r in RUANGAN:
         rooms.append({**r, **per_room[r["id"]]})
     menunggu = await db.jadwal.count_documents({"status": "menunggu"})
+    menunggu_izin = await db.izin.count_documents({"status": "menunggu"})
     return {
         "tanggal": tgl,
         "total_pegawai": len(pegawai),
         "di_dalam": di_dalam_total,
         "di_luar": di_luar_total,
+        "izin": izin_total,
         "menunggu_approval": menunggu,
+        "menunggu_izin": menunggu_izin,
         "ruangan": rooms,
         "tanpa_ruangan": tanpa_ruangan,
     }
@@ -1054,6 +1160,29 @@ async def seed_data():
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
         await db.jadwal.insert_many([j1, j2, j3])
+
+    if await db.izin.count_documents({}) == 0:
+        pg = await db.pegawai.find({}, {"_id": 0}).sort("nama", 1).to_list(2000)
+        if pg:
+            now = datetime.now(timezone.utc).date()
+            today = now.isoformat()
+            besok = (now + timedelta(days=1)).isoformat()
+            iz1 = {
+                "id": str(uuid.uuid4()), "pegawai_id": pg[0]["id"], "jenis": "Sakit",
+                "tanggal_mulai": today, "tanggal_selesai": today,
+                "alasan": "Demam dan istirahat sesuai anjuran dokter", "diajukan_oleh": "Petugas / Staf",
+                "status": "disetujui", "disetujui_oleh": "Kepala TU", "catatan_approval": "",
+                "waktu_approval": datetime.now(timezone.utc).isoformat(),
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }
+            iz2 = {
+                "id": str(uuid.uuid4()), "pegawai_id": pg[min(5, len(pg) - 1)]["id"], "jenis": "Cuti",
+                "tanggal_mulai": today, "tanggal_selesai": besok,
+                "alasan": "Keperluan keluarga", "diajukan_oleh": "Petugas / Staf",
+                "status": "menunggu", "disetujui_oleh": "", "catatan_approval": "", "waktu_approval": "",
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }
+            await db.izin.insert_many([iz1, iz2])
 
 
 app.include_router(api_router)

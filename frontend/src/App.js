@@ -9,6 +9,7 @@ import Jadwal from "@/pages/Jadwal";
 import Approval from "@/pages/Approval";
 import Kalender from "@/pages/Kalender";
 import Matriks from "@/pages/Matriks";
+import Izin from "@/pages/Izin";
 
 export const RoleContext = createContext({ role: "Kepala TU", setRole: () => {} });
 
@@ -36,6 +37,7 @@ function App() {
               <Route path="approval" element={<Approval />} />
               <Route path="kalender" element={<Kalender />} />
               <Route path="matriks" element={<Matriks />} />
+              <Route path="izin" element={<Izin />} />
             </Route>
           </Routes>
         </BrowserRouter>

@@ -1,6 +1,6 @@
 import { useContext, useState } from "react";
 import { NavLink, Outlet } from "react-router-dom";
-import { LayoutDashboard, Users, CalendarClock, ClipboardCheck, CalendarDays, HeartPulse, Grid3x3, Lock, KeyRound, ShieldCheck } from "lucide-react";
+import { LayoutDashboard, Users, CalendarClock, ClipboardCheck, CalendarDays, HeartPulse, Grid3x3, Lock, KeyRound, ShieldCheck, UserMinus } from "lucide-react";
 import { RoleContext, ROLES, PIN_ROLES } from "@/App";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
@@ -12,6 +12,7 @@ const NAV = [
   { to: "/", label: "Dashboard Ruangan", icon: LayoutDashboard, testid: "nav-dashboard", end: true },
   { to: "/pegawai", label: "Data Pegawai", icon: Users, testid: "nav-pegawai" },
   { to: "/jadwal", label: "Jadwal Kegiatan Luar", icon: CalendarClock, testid: "nav-jadwal" },
+  { to: "/izin", label: "Pengajuan Izin", icon: UserMinus, testid: "nav-izin" },
   { to: "/matriks", label: "Matriks & Sinkronisasi", icon: Grid3x3, testid: "nav-matriks" },
   { to: "/approval", label: "Persetujuan", icon: ClipboardCheck, testid: "nav-approval" },
   { to: "/kalender", label: "Kalender", icon: CalendarDays, testid: "nav-kalender" },

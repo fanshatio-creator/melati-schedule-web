@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { api } from "@/lib/api";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { api, API } from "@/lib/api";
+import { ChevronLeft, ChevronRight, FileSpreadsheet, FileText } from "lucide-react";
 
 const BULAN = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
 const HARI = ["Sen", "Sel", "Rab", "Kam", "Jum", "Sab", "Min"];
@@ -38,6 +38,8 @@ export default function Kalender() {
 
   const todayIso = iso(new Date());
 
+  const exportUrl = (fmt) => `${API}/jadwal/export/${fmt}?year=${cursor.getFullYear()}&month=${cursor.getMonth() + 1}`;
+
   const jadwalOn = (d) => {
     const s = iso(d);
     return jadwal.filter((j) => j.tanggal_mulai <= s && s <= j.tanggal_selesai);
@@ -51,6 +53,21 @@ export default function Kalender() {
           <p className="text-sm text-slate-500 mt-1">Warna menunjukkan status persetujuan jadwal</p>
         </div>
         <div className="flex items-center gap-2">
+          <a
+            href={exportUrl("excel")}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-700 text-sm font-medium hover:bg-emerald-100 transition-colors"
+            data-testid="kalender-export-excel"
+          >
+            <FileSpreadsheet size={15} /> Ekspor Excel
+          </a>
+          <a
+            href={exportUrl("pdf")}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-rose-200 bg-rose-50 text-rose-700 text-sm font-medium hover:bg-rose-100 transition-colors"
+            data-testid="kalender-export-pdf"
+          >
+            <FileText size={15} /> Ekspor PDF
+          </a>
+          <div className="w-px h-6 bg-slate-200 mx-1" />
           <button onClick={() => setCursor(new Date(cursor.getFullYear(), cursor.getMonth() - 1, 1))} className="p-2 rounded-lg border border-border bg-white hover:bg-slate-50 transition-colors" data-testid="kalender-prev">
             <ChevronLeft size={16} />
           </button>

@@ -7,10 +7,12 @@ import io
 import re
 import uuid
 import logging
+import calendar
 from pathlib import Path
+from fastapi.responses import Response
 from pydantic import BaseModel
 from typing import List, Optional
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone, timedelta, date
 import pandas as pd
 
 ROOT_DIR = Path(__file__).parent
@@ -38,6 +40,13 @@ RUANGAN = [
     {"id": "pendaftaran-antrian", "name": "Pendaftaran Antrian", "code": "PDF-ANT", "category": "Pendaftaran Pasien"},
     {"id": "klaster-4", "name": "Klaster 4", "code": "KL-04", "category": "Penanggulangan Penyakit Menular"},
 ]
+
+RUANGAN_MAP = {r["id"]: r["name"] for r in RUANGAN}
+
+BULAN_ID = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli",
+            "Agustus", "September", "Oktober", "November", "Desember"]
+
+STATUS_LABEL_ID = {"menunggu": "Menunggu Persetujuan", "disetujui": "Disetujui", "ditolak": "Ditolak"}
 
 PEGAWAI_ALIASES = {
     "nip": ["nip", "nik", "no induk"],
@@ -215,6 +224,7 @@ async def find_conflicts(pegawai_ids, t_mulai, t_selesai, exclude_id=None):
                 "tanggal_mulai": d["tanggal_mulai"],
                 "tanggal_selesai": d["tanggal_selesai"],
                 "lokasi": d.get("lokasi", ""),
+                "status": d.get("status", ""),
                 "pegawai": [pmap[pid]["nama"] for pid in overlap if pid in pmap],
             })
     return conflicts
@@ -536,6 +546,155 @@ async def bulk_jadwal(input: BulkJadwalInput):
             accepted_ranges.setdefault(pid, []).append((mulai, selesai))
         added.append(label)
     return {"added": len(added), "added_names": added, "skipped": skipped}
+
+
+# ---------- EXPORT ----------
+async def _jadwal_for_month(year: int, month: int):
+    first = date(year, month, 1)
+    last = date(year, month, calendar.monthrange(year, month)[1])
+    docs = await db.jadwal.find({
+        "tanggal_mulai": {"$lte": last.isoformat()},
+        "tanggal_selesai": {"$gte": first.isoformat()},
+    }, {"_id": 0}).sort("tanggal_mulai", 1).to_list(2000)
+    pids = list({pid for d in docs for pid in d.get("pegawai_ids", [])})
+    plist = await db.pegawai.find({"id": {"$in": pids}}, {"_id": 0}).to_list(2000) if pids else []
+    pmap = {p["id"]: p for p in plist}
+    for d in docs:
+        d["pegawai_nama"] = ", ".join(pmap[pid]["nama"] for pid in d.get("pegawai_ids", []) if pid in pmap)
+    return docs, first, last
+
+
+def _fmt_range(mulai, selesai):
+    if mulai == selesai:
+        return mulai
+    return f"{mulai} s/d {selesai}"
+
+
+@api_router.get("/jadwal/export/excel")
+async def export_jadwal_excel(year: int, month: int):
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    docs, first, last = await _jadwal_for_month(year, month)
+    judul = f"Jadwal Kegiatan Luar Puskesmas — {BULAN_ID[month - 1]} {year}"
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = f"{BULAN_ID[month - 1]} {year}"[:31]
+    headers = ["No", "Nama Kegiatan", "Tanggal", "Lokasi / Faskes", "Pegawai Ditugaskan", "Status", "Keterangan"]
+
+    ws.merge_cells("A1:G1")
+    ws["A1"] = judul
+    ws["A1"].font = Font(bold=True, size=13, color="FFFFFF")
+    ws["A1"].fill = PatternFill("solid", fgColor="047857")
+    ws["A1"].alignment = Alignment(horizontal="center", vertical="center")
+    ws.row_dimensions[1].height = 26
+
+    head_fill = PatternFill("solid", fgColor="D1FAE5")
+    thin = Side(style="thin", color="CBD5E1")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    for c, h in enumerate(headers, start=1):
+        cell = ws.cell(row=2, column=c, value=h)
+        cell.font = Font(bold=True, color="065F46")
+        cell.fill = head_fill
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        cell.border = border
+
+    for i, d in enumerate(docs, start=1):
+        row = [
+            i,
+            d.get("nama_kegiatan", ""),
+            _fmt_range(d.get("tanggal_mulai", ""), d.get("tanggal_selesai", "")),
+            d.get("lokasi", ""),
+            d.get("pegawai_nama", ""),
+            STATUS_LABEL_ID.get(d.get("status", ""), d.get("status", "")),
+            d.get("keterangan", ""),
+        ]
+        for c, val in enumerate(row, start=1):
+            cell = ws.cell(row=2 + i, column=c, value=val)
+            cell.alignment = Alignment(vertical="top", wrap_text=True, horizontal="center" if c in (1, 3, 6) else "left")
+            cell.border = border
+
+    if not docs:
+        ws.merge_cells(start_row=3, start_column=1, end_row=3, end_column=7)
+        ws.cell(row=3, column=1, value="Tidak ada jadwal pada bulan ini").alignment = Alignment(horizontal="center")
+
+    widths = [5, 34, 22, 26, 34, 20, 30]
+    for c, w in enumerate(widths, start=1):
+        ws.column_dimensions[chr(64 + c)].width = w
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    fname = f"jadwal-{year}-{month:02d}.xlsx"
+    return Response(
+        content=buf.read(),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
+
+
+@api_router.get("/jadwal/export/pdf")
+async def export_jadwal_pdf(year: int, month: int):
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib import colors
+    from reportlab.lib.units import mm
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+
+    docs, first, last = await _jadwal_for_month(year, month)
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=landscape(A4), leftMargin=14 * mm,
+                            rightMargin=14 * mm, topMargin=14 * mm, bottomMargin=14 * mm)
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle("t", parent=styles["Title"], fontSize=15, textColor=colors.HexColor("#065F46"))
+    sub_style = ParagraphStyle("s", parent=styles["Normal"], fontSize=9, textColor=colors.HexColor("#64748B"))
+    cell_style = ParagraphStyle("c", parent=styles["Normal"], fontSize=8, leading=10)
+    head_style = ParagraphStyle("h", parent=styles["Normal"], fontSize=8, leading=10,
+                                textColor=colors.HexColor("#065F46"), fontName="Helvetica-Bold")
+
+    elems = [
+        Paragraph("Jadwal Kegiatan Luar Puskesmas", title_style),
+        Paragraph(f"Periode: {BULAN_ID[month - 1]} {year}", sub_style),
+        Spacer(1, 8),
+    ]
+
+    headers = ["No", "Nama Kegiatan", "Tanggal", "Lokasi", "Pegawai", "Status", "Keterangan"]
+    data = [[Paragraph(h, head_style) for h in headers]]
+    for i, d in enumerate(docs, start=1):
+        data.append([
+            Paragraph(str(i), cell_style),
+            Paragraph(d.get("nama_kegiatan", ""), cell_style),
+            Paragraph(_fmt_range(d.get("tanggal_mulai", ""), d.get("tanggal_selesai", "")), cell_style),
+            Paragraph(d.get("lokasi", "") or "-", cell_style),
+            Paragraph(d.get("pegawai_nama", "") or "-", cell_style),
+            Paragraph(STATUS_LABEL_ID.get(d.get("status", ""), d.get("status", "")), cell_style),
+            Paragraph(d.get("keterangan", "") or "-", cell_style),
+        ])
+    if not docs:
+        data.append([Paragraph("Tidak ada jadwal pada bulan ini", cell_style)] + ["" for _ in range(6)])
+
+    col_widths = [12 * mm, 52 * mm, 34 * mm, 40 * mm, 55 * mm, 30 * mm, 46 * mm]
+    table = Table(data, colWidths=col_widths, repeatRows=1)
+    table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#D1FAE5")),
+        ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#CBD5E1")),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("ALIGN", (0, 0), (0, -1), "CENTER"),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F8FAFC")]),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+    ]))
+    if not docs:
+        table.setStyle(TableStyle([("SPAN", (0, 1), (-1, 1)), ("ALIGN", (0, 1), (-1, 1), "CENTER")]))
+    elems.append(table)
+    doc.build(elems)
+    buf.seek(0)
+    fname = f"jadwal-{year}-{month:02d}.pdf"
+    return Response(
+        content=buf.read(),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
 
 
 # ---------- DASHBOARD ----------

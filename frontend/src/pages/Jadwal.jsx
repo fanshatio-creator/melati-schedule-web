@@ -12,15 +12,32 @@ const EMPTY = { nama_kegiatan: "", tanggal_mulai: "", tanggal_selesai: "", lokas
 function ConflictBanner({ conflicts }) {
   if (!conflicts || conflicts.length === 0) return null;
   return (
-    <div className="bg-rose-50 border border-rose-200 rounded-lg p-3 space-y-1" data-testid="jadwal-conflict-banner">
+    <div className="bg-rose-50 border border-rose-200 rounded-lg p-3 space-y-2" data-testid="jadwal-conflict-banner">
       <p className="text-xs font-bold text-rose-700 flex items-center gap-1.5">
         <AlertTriangle size={14} /> Jadwal bentrok — penyimpanan diblokir
       </p>
-      {conflicts.map((c, i) => (
-        <p key={i} className="text-xs text-rose-600">
-          • {c.pegawai.join(", ")} sudah ditugaskan pada "{c.nama_kegiatan}" ({formatTanggal(c.tanggal_mulai)} – {formatTanggal(c.tanggal_selesai)})
-        </p>
-      ))}
+      <div className="space-y-2">
+        {conflicts.map((c, i) => (
+          <div key={i} className="bg-white border border-rose-200 rounded-md p-2.5" data-testid={`jadwal-conflict-item-${i}`}>
+            <div className="flex items-start justify-between gap-2">
+              <p className="text-xs font-semibold text-slate-800">{c.nama_kegiatan}</p>
+              {c.status && (
+                <span className={`shrink-0 text-[10px] font-semibold px-2 py-0.5 rounded-full border ${STATUS_STYLE[c.status]}`} data-testid={`jadwal-conflict-status-${i}`}>
+                  {STATUS_LABEL[c.status]}
+                </span>
+              )}
+            </div>
+            <p className="text-[11px] text-slate-500 mt-1 font-mono-code">
+              {formatTanggal(c.tanggal_mulai)}{c.tanggal_selesai !== c.tanggal_mulai ? ` – ${formatTanggal(c.tanggal_selesai)}` : ""}
+              {c.lokasi && <span className="font-body"> • {c.lokasi}</span>}
+            </p>
+            <p className="text-[11px] text-rose-600 mt-1">
+              Bentrok untuk: <span className="font-medium">{c.pegawai.join(", ")}</span>
+            </p>
+          </div>
+        ))}
+      </div>
+      <p className="text-[11px] text-rose-500">Ubah tanggal atau lepaskan pegawai di atas untuk melanjutkan.</p>
     </div>
   );
 }

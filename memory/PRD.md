@@ -40,4 +40,10 @@ Internal web app for scheduling puskesmas field activities. Dashboard of employe
 - Report export
 
 ## Notes
-- Scope of this task was import + install + run only. No feature changes made.
+- Scope of the initial task was import + install + run only.
+
+## Updates (2026-06) — post-import enhancements
+- **Requirements cleanup**: replaced bloated `requirements.txt` (which pinned conflicting `emergentintegrations`/`litellm`) with a lean, pinned list of only packages the app imports. `pip install -r requirements.txt` now succeeds cleanly.
+- **Report export**: new backend endpoints `GET /api/jadwal/export/excel` and `GET /api/jadwal/export/pdf` (params `year`, `month`) generate a styled monthly schedule (openpyxl for XLSX, reportlab for PDF). "Ekspor Excel"/"Ekspor PDF" buttons added to the Kalender page header (export the currently viewed month).
+- **Conflict preview**: `find_conflicts` now returns the clashing activity's `status`; the Jadwal form conflict banner now shows each clashing activity as a card (name, status badge, date range, location, affected employees) plus a "change date / remove employee" hint.
+- Verified: pytest 13/13 pass; exports return valid XLSX/PDF with correct headers; conflict UI renders and blocks submit.

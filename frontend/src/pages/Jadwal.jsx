@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 
-const EMPTY = { nama_kegiatan: "", tanggal_mulai: "", tanggal_selesai: "", lokasi: "", keterangan: "", pegawai_ids: [] };
+const EMPTY = { nama_kegiatan: "", tanggal_mulai: "", tanggal_selesai: "", lokasi: "", koordinator: "", keterangan: "", pegawai_ids: [] };
 
 function ConflictBanner({ conflicts }) {
   if (!conflicts || conflicts.length === 0) return null;
@@ -86,7 +86,7 @@ export default function Jadwal() {
   const openAdd = () => { setEditing(null); setForm(EMPTY); setConflicts([]); setFormOpen(true); };
   const openEdit = (j) => {
     setEditing(j);
-    setForm({ nama_kegiatan: j.nama_kegiatan, tanggal_mulai: j.tanggal_mulai, tanggal_selesai: j.tanggal_selesai, lokasi: j.lokasi, keterangan: j.keterangan, pegawai_ids: j.pegawai_ids });
+    setForm({ nama_kegiatan: j.nama_kegiatan, tanggal_mulai: j.tanggal_mulai, tanggal_selesai: j.tanggal_selesai, lokasi: j.lokasi, koordinator: j.koordinator || "", keterangan: j.keterangan, pegawai_ids: j.pegawai_ids });
     setConflicts([]);
     setFormOpen(true);
   };
@@ -195,6 +195,7 @@ export default function Jadwal() {
                 {j.lokasi && <span className="font-body"> • {j.lokasi}</span>}
               </p>
               {j.keterangan && <p className="text-xs text-slate-400 mt-1">{j.keterangan}</p>}
+              {j.koordinator && <p className="text-xs text-slate-500 mt-1" data-testid={`jadwal-koordinator-${j.id}`}>Koordinator: <span className="font-medium text-slate-700">{j.koordinator}</span></p>}
               <div className="flex flex-wrap gap-1.5 mt-2">
                 {j.pegawai?.map((p) => (
                   <span key={p.id} className="text-xs px-2 py-1 rounded-md bg-slate-100 text-slate-700">{p.nama}</span>
@@ -237,6 +238,10 @@ export default function Jadwal() {
               </div>
             </div>
             <Input placeholder="Lokasi / Faskes Tujuan" value={form.lokasi} onChange={(e) => setForm({ ...form, lokasi: e.target.value })} data-testid="jadwal-input-lokasi" />
+            <div>
+              <label className="text-xs text-slate-500 mb-1 block">Koordinator Program (Pengisi)</label>
+              <Input placeholder="Nama koordinator / pengisi formulir" value={form.koordinator} onChange={(e) => setForm({ ...form, koordinator: e.target.value })} data-testid="jadwal-input-koordinator" />
+            </div>
             <div>
               <label className="text-xs text-slate-500 mb-1 block">Pegawai yang Ditugaskan</label>
               <div className="border border-border rounded-lg max-h-40 overflow-y-auto p-2 grid grid-cols-1 sm:grid-cols-2 gap-1" data-testid="jadwal-pegawai-select">

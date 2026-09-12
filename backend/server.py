@@ -63,6 +63,7 @@ JADWAL_ALIASES = {
     "tanggal_selesai": ["tanggal selesai", "tgl selesai", "selesai", "berakhir", "sampai"],
     "lokasi": ["lokasi", "tempat", "faskes"],
     "pegawai": ["pegawai", "petugas", "personil", "penanggung jawab", "pelaksana"],
+    "koordinator": ["koordinator", "pengisi", "pj program", "koordinator program", "pelapor"],
     "keterangan": ["keterangan", "catatan", "output"],
 }
 
@@ -257,6 +258,7 @@ class JadwalInput(BaseModel):
     tanggal_mulai: str
     tanggal_selesai: str
     lokasi: str = ""
+    koordinator: str = ""
     keterangan: str = ""
     pegawai_ids: List[str] = []
 
@@ -267,6 +269,7 @@ class BulkJadwalRow(BaseModel):
     tanggal_selesai: str = ""
     lokasi: str = ""
     pegawai: str = ""
+    koordinator: str = ""
     keterangan: str = ""
 
 
@@ -476,6 +479,7 @@ async def parse_jadwal_file(file: UploadFile = File(...)):
             "tanggal_selesai": selesai or r.get("tanggal_selesai", "") or (mulai or ""),
             "lokasi": r.get("lokasi", ""),
             "pegawai": r.get("pegawai", ""),
+            "koordinator": r.get("koordinator", ""),
             "keterangan": r.get("keterangan", ""),
         })
     return {"rows": out, "count": len(out)}
@@ -533,6 +537,7 @@ async def bulk_jadwal(input: BulkJadwalInput):
             "tanggal_mulai": mulai,
             "tanggal_selesai": selesai,
             "lokasi": row.lokasi.strip(),
+            "koordinator": row.koordinator.strip(),
             "keterangan": row.keterangan.strip(),
             "pegawai_ids": pids,
             "status": "menunggu",
@@ -580,9 +585,9 @@ async def export_jadwal_excel(year: int, month: int):
     wb = Workbook()
     ws = wb.active
     ws.title = f"{BULAN_ID[month - 1]} {year}"[:31]
-    headers = ["No", "Nama Kegiatan", "Tanggal", "Lokasi / Faskes", "Pegawai Ditugaskan", "Status", "Keterangan"]
+    headers = ["No", "Nama Kegiatan", "Tanggal", "Lokasi / Faskes", "Pegawai Ditugaskan", "Koordinator Program", "Status", "Keterangan"]
 
-    ws.merge_cells("A1:G1")
+    ws.merge_cells("A1:H1")
     ws["A1"] = judul
     ws["A1"].font = Font(bold=True, size=13, color="FFFFFF")
     ws["A1"].fill = PatternFill("solid", fgColor="047857")
@@ -606,19 +611,20 @@ async def export_jadwal_excel(year: int, month: int):
             _fmt_range(d.get("tanggal_mulai", ""), d.get("tanggal_selesai", "")),
             d.get("lokasi", ""),
             d.get("pegawai_nama", ""),
+            d.get("koordinator", ""),
             STATUS_LABEL_ID.get(d.get("status", ""), d.get("status", "")),
             d.get("keterangan", ""),
         ]
         for c, val in enumerate(row, start=1):
             cell = ws.cell(row=2 + i, column=c, value=val)
-            cell.alignment = Alignment(vertical="top", wrap_text=True, horizontal="center" if c in (1, 3, 6) else "left")
+            cell.alignment = Alignment(vertical="top", wrap_text=True, horizontal="center" if c in (1, 3, 7) else "left")
             cell.border = border
 
     if not docs:
-        ws.merge_cells(start_row=3, start_column=1, end_row=3, end_column=7)
+        ws.merge_cells(start_row=3, start_column=1, end_row=3, end_column=8)
         ws.cell(row=3, column=1, value="Tidak ada jadwal pada bulan ini").alignment = Alignment(horizontal="center")
 
-    widths = [5, 34, 22, 26, 34, 20, 30]
+    widths = [5, 32, 22, 24, 30, 24, 20, 28]
     for c, w in enumerate(widths, start=1):
         ws.column_dimensions[chr(64 + c)].width = w
 
@@ -658,7 +664,7 @@ async def export_jadwal_pdf(year: int, month: int):
         Spacer(1, 8),
     ]
 
-    headers = ["No", "Nama Kegiatan", "Tanggal", "Lokasi", "Pegawai", "Status", "Keterangan"]
+    headers = ["No", "Nama Kegiatan", "Tanggal", "Lokasi", "Pegawai", "Koordinator", "Status", "Keterangan"]
     data = [[Paragraph(h, head_style) for h in headers]]
     for i, d in enumerate(docs, start=1):
         data.append([
@@ -667,13 +673,14 @@ async def export_jadwal_pdf(year: int, month: int):
             Paragraph(_fmt_range(d.get("tanggal_mulai", ""), d.get("tanggal_selesai", "")), cell_style),
             Paragraph(d.get("lokasi", "") or "-", cell_style),
             Paragraph(d.get("pegawai_nama", "") or "-", cell_style),
+            Paragraph(d.get("koordinator", "") or "-", cell_style),
             Paragraph(STATUS_LABEL_ID.get(d.get("status", ""), d.get("status", "")), cell_style),
             Paragraph(d.get("keterangan", "") or "-", cell_style),
         ])
     if not docs:
-        data.append([Paragraph("Tidak ada jadwal pada bulan ini", cell_style)] + ["" for _ in range(6)])
+        data.append([Paragraph("Tidak ada jadwal pada bulan ini", cell_style)] + ["" for _ in range(7)])
 
-    col_widths = [12 * mm, 52 * mm, 34 * mm, 40 * mm, 55 * mm, 30 * mm, 46 * mm]
+    col_widths = [10 * mm, 46 * mm, 30 * mm, 34 * mm, 46 * mm, 30 * mm, 26 * mm, 37 * mm]
     table = Table(data, colWidths=col_widths, repeatRows=1)
     table.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#D1FAE5")),

@@ -269,6 +269,7 @@ class BulkJadwalRow(BaseModel):
     tanggal_selesai: str = ""
     lokasi: str = ""
     pegawai: str = ""
+    pegawai_ids: List[str] = []
     koordinator: str = ""
     keterangan: str = ""
 
@@ -469,16 +470,32 @@ async def parse_jadwal_file(file: UploadFile = File(...)):
     content = await file.read()
     table = read_table(file.filename, content)
     rows = rows_to_dicts(table, JADWAL_ALIASES)
+    all_pegawai = await db.pegawai.find({}, {"_id": 0}).to_list(2000)
+    by_name = {norm(p["nama"]): p for p in all_pegawai}
+    by_nip = {norm(p.get("nip", "")): p for p in all_pegawai if p.get("nip")}
     out = []
     for r in rows:
         mulai = parse_date_value(r.get("tanggal_mulai"))
         selesai = parse_date_value(r.get("tanggal_selesai")) or mulai
+        pegawai_raw = r.get("pegawai", "")
+        pids, unmatched = [], []
+        for nm in re.split(r"[;\n]", pegawai_raw or ""):
+            nm = nm.strip()
+            if not nm:
+                continue
+            p = by_name.get(norm(nm)) or by_nip.get(norm(nm))
+            if p and p["id"] not in pids:
+                pids.append(p["id"])
+            elif not p:
+                unmatched.append(nm)
         out.append({
             "nama_kegiatan": r.get("nama_kegiatan", ""),
             "tanggal_mulai": mulai or r.get("tanggal_mulai", ""),
             "tanggal_selesai": selesai or r.get("tanggal_selesai", "") or (mulai or ""),
             "lokasi": r.get("lokasi", ""),
-            "pegawai": r.get("pegawai", ""),
+            "pegawai": pegawai_raw,
+            "pegawai_ids": pids,
+            "pegawai_unmatched": unmatched,
             "koordinator": r.get("koordinator", ""),
             "keterangan": r.get("keterangan", ""),
         })
@@ -490,6 +507,7 @@ async def bulk_jadwal(input: BulkJadwalInput):
     all_pegawai = await db.pegawai.find({}, {"_id": 0}).to_list(2000)
     by_name = {norm(p["nama"]): p for p in all_pegawai}
     by_nip = {norm(p.get("nip", "")): p for p in all_pegawai if p.get("nip")}
+    id_set = {p["id"] for p in all_pegawai}
     added, skipped = [], []
     accepted_ranges = {}
     for row in input.rows:
@@ -506,18 +524,21 @@ async def bulk_jadwal(input: BulkJadwalInput):
             skipped.append({"nama_kegiatan": label, "reason": "Tanggal selesai lebih awal dari tanggal mulai"})
             continue
         pids, unknown = [], []
-        for nm in re.split(r"[,;\n]", row.pegawai or ""):
-            nm = nm.strip()
-            if not nm:
+        if row.pegawai_ids:
+            pids = [pid for pid in row.pegawai_ids if pid in id_set]
+        else:
+            for nm in re.split(r"[;\n]", row.pegawai or ""):
+                nm = nm.strip()
+                if not nm:
+                    continue
+                p = by_name.get(norm(nm)) or by_nip.get(norm(nm))
+                if p:
+                    pids.append(p["id"])
+                else:
+                    unknown.append(nm)
+            if row.pegawai.strip() and not pids:
+                skipped.append({"nama_kegiatan": label, "reason": f"Pegawai tidak ditemukan: {', '.join(unknown)}"})
                 continue
-            p = by_name.get(norm(nm)) or by_nip.get(norm(nm))
-            if p:
-                pids.append(p["id"])
-            else:
-                unknown.append(nm)
-        if row.pegawai.strip() and not pids:
-            skipped.append({"nama_kegiatan": label, "reason": f"Pegawai tidak ditemukan: {', '.join(unknown)}"})
-            continue
         conflicts = await find_conflicts(pids, mulai, selesai)
         if conflicts:
             names = sorted({n for c in conflicts for n in c["pegawai"]})
@@ -701,6 +722,87 @@ async def export_jadwal_pdf(year: int, month: int):
         content=buf.read(),
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
+
+
+@api_router.get("/jadwal/template")
+async def download_jadwal_template():
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+
+    pegawai = await db.pegawai.find({}, {"_id": 0}).sort("nama", 1).to_list(2000)
+    nama_list = [p["nama"] for p in pegawai]
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Jadwal"
+    headers = ["Nama Kegiatan", "Tanggal Mulai", "Tanggal Selesai", "Lokasi", "Pegawai", "Koordinator", "Keterangan"]
+
+    head_fill = PatternFill("solid", fgColor="047857")
+    thin = Side(style="thin", color="CBD5E1")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    for c, h in enumerate(headers, start=1):
+        cell = ws.cell(row=1, column=c, value=h)
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.fill = head_fill
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        cell.border = border
+    ws.row_dimensions[1].height = 24
+
+    ex1 = nama_list[0] if nama_list else "Nama Pegawai"
+    ex_multi = "; ".join(nama_list[1:4]) if len(nama_list) >= 4 else "; ".join(nama_list[:2]) if len(nama_list) >= 2 else ex1
+    examples = [
+        ["Posyandu Balita Kelurahan Sukamaju", "19/09/2026", "19/09/2026", "Balai RW 05", ex_multi, ex1, "Penimbangan & imunisasi dasar"],
+        ["Puskesmas Keliling Desa Binaan", "22/09/2026", "23/09/2026", "Desa Binaan", "; ".join(nama_list[:2]) if len(nama_list) >= 2 else ex1, ex1, "Pemeriksaan umum gratis"],
+    ]
+    for i, ex in enumerate(examples, start=2):
+        for c, val in enumerate(ex, start=1):
+            cell = ws.cell(row=i, column=c, value=val)
+            cell.alignment = Alignment(vertical="top", wrap_text=True)
+            cell.border = border
+
+    widths = [34, 15, 15, 24, 46, 26, 34]
+    for c, w in enumerate(widths, start=1):
+        ws.column_dimensions[chr(64 + c)].width = w
+
+    note = ("PETUNJUK PENGISIAN:\n"
+            "• Satu baris = satu kegiatan.\n"
+            "• Kolom 'Pegawai' BOLEH LEBIH DARI SATU petugas — pisahkan setiap nama dengan TITIK KOMA (;). "
+            "Contoh: \"Nama A; Nama B; Nama C\". (Jangan gunakan koma karena banyak nama mengandung koma, mis. 'Bd. Dewi, S.Tr.Keb').\n"
+            "• Setiap nama harus PERSIS sama dengan daftar di sheet 'Daftar Pegawai' (salin-tempel untuk menghindari salah ketik).\n"
+            "• Tanggal format DD/MM/YYYY (mis. 19/09/2026).\n"
+            "• 'Koordinator' = nama pengisi/penanggung jawab program.\n"
+            "• Hapus 2 baris contoh di atas sebelum mengunggah.")
+    ncell = ws.cell(row=len(examples) + 3, column=1, value=note)
+    ncell.font = Font(italic=True, color="B91C1C", size=9)
+    ncell.alignment = Alignment(wrap_text=True, vertical="top")
+    ws.merge_cells(start_row=len(examples) + 3, start_column=1, end_row=len(examples) + 3, end_column=7)
+    ws.row_dimensions[len(examples) + 3].height = 108
+
+    # Reference sheet with valid employee names
+    ref = wb.create_sheet("Daftar Pegawai")
+    ref_headers = ["Nama Pegawai", "NIP", "Jabatan"]
+    for c, h in enumerate(ref_headers, start=1):
+        cell = ref.cell(row=1, column=c, value=h)
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.fill = head_fill
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+        cell.border = border
+    for i, p in enumerate(pegawai, start=2):
+        ref.cell(row=i, column=1, value=p["nama"]).border = border
+        ref.cell(row=i, column=2, value=p.get("nip", "")).border = border
+        ref.cell(row=i, column=3, value=p.get("jabatan", "")).border = border
+    ref.column_dimensions["A"].width = 40
+    ref.column_dimensions["B"].width = 26
+    ref.column_dimensions["C"].width = 30
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return Response(
+        content=buf.read(),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="template-import-jadwal.xlsx"'},
     )
 
 

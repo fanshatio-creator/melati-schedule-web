@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from "react";
-import { api, formatTanggal, STATUS_LABEL, STATUS_STYLE } from "@/lib/api";
+import { api, API, formatTanggal, STATUS_LABEL, STATUS_STYLE } from "@/lib/api";
 import { toast } from "sonner";
-import { Plus, Upload, Pencil, Trash2, AlertTriangle, FileSpreadsheet, X, Download } from "lucide-react";
+import { Plus, Upload, Pencil, Trash2, AlertTriangle, FileSpreadsheet, X, Download, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 
 const EMPTY = { nama_kegiatan: "", tanggal_mulai: "", tanggal_selesai: "", lokasi: "", koordinator: "", keterangan: "", pegawai_ids: [] };
 
@@ -150,7 +151,17 @@ export default function Jadwal() {
   const confirmImport = async () => {
     setImporting(true);
     try {
-      const res = await api.post("/jadwal/bulk", { rows: preview });
+      const rows = preview.map((r) => ({
+        nama_kegiatan: r.nama_kegiatan,
+        tanggal_mulai: r.tanggal_mulai,
+        tanggal_selesai: r.tanggal_selesai,
+        lokasi: r.lokasi,
+        koordinator: r.koordinator || "",
+        keterangan: r.keterangan || "",
+        pegawai: r.pegawai || "",
+        pegawai_ids: r.pegawai_ids || [],
+      }));
+      const res = await api.post("/jadwal/bulk", { rows });
       setSkipped(res.data.skipped);
       toast.success(`${res.data.added} jadwal berhasil diimpor`);
       if (res.data.skipped.length > 0) toast.warning(`${res.data.skipped.length} baris dilewati (bentrok/tidak valid)`);
@@ -162,6 +173,17 @@ export default function Jadwal() {
       setImporting(false);
     }
   };
+
+  const togglePreviewPegawai = (rowIdx, pid) => {
+    setPreview((rows) => rows.map((r, i) => i === rowIdx ? {
+      ...r,
+      pegawai_ids: (r.pegawai_ids || []).includes(pid)
+        ? r.pegawai_ids.filter((x) => x !== pid)
+        : [...(r.pegawai_ids || []), pid],
+    } : r));
+  };
+
+  const pMap = Object.fromEntries(pegawai.map((p) => [p.id, p.nama]));
 
   return (
     <div className="space-y-6" data-testid="jadwal-page">
@@ -289,16 +311,16 @@ export default function Jadwal() {
               >
                 <FileSpreadsheet size={32} className="mx-auto text-slate-400 mb-3" />
                 <p className="text-sm font-medium text-slate-700">Klik untuk memilih file</p>
-                <p className="text-xs text-slate-400 mt-1">Format: .xlsx, .xls, .csv, .pdf, .docx — kolom: Kegiatan, Tanggal Mulai, Tanggal Selesai, Lokasi, Pegawai, Keterangan</p>
+                <p className="text-xs text-slate-400 mt-1">Format: .xlsx, .xls, .csv, .pdf, .docx — kolom: Kegiatan, Tanggal Mulai, Tanggal Selesai, Lokasi, Pegawai (boleh lebih dari satu, pisahkan dengan titik koma ;), Koordinator, Keterangan</p>
               </button>
               <a
-                href="/templates/template-import-jadwal.xlsx"
-                download
+                href={`${API}/jadwal/template`}
                 className="flex items-center justify-center gap-2 w-full px-4 py-2.5 rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-700 text-sm font-medium hover:bg-emerald-100 transition-colors"
                 data-testid="jadwal-download-template"
               >
                 <Download size={15} /> Unduh Template Excel Jadwal
               </a>
+              <p className="text-[11px] text-slate-400 text-center">Template berisi contoh pengisian, daftar nama pegawai yang valid, dan mendukung banyak petugas per kegiatan.</p>
             </div>
           ) : (
             <div className="space-y-3">
@@ -306,21 +328,60 @@ export default function Jadwal() {
                 <p className="text-sm text-slate-600" data-testid="jadwal-import-count">{preview.length} baris terbaca — baris bentrok akan ditolak otomatis</p>
                 <button onClick={() => { setPreview(null); setSkipped([]); }} className="text-slate-400 hover:text-slate-600" data-testid="jadwal-import-reset"><X size={16} /></button>
               </div>
-              <div className="max-h-64 overflow-auto border border-border rounded-lg">
+              <div className="max-h-80 overflow-auto border border-border rounded-lg">
                 <table className="w-full text-xs">
-                  <thead className="bg-slate-50 sticky top-0">
+                  <thead className="bg-slate-50 sticky top-0 z-10">
                     <tr className="text-left text-slate-500">
-                      <th className="px-3 py-2">Kegiatan</th><th className="px-3 py-2">Mulai</th><th className="px-3 py-2">Selesai</th><th className="px-3 py-2">Lokasi</th><th className="px-3 py-2">Pegawai</th>
+                      <th className="px-3 py-2">Kegiatan</th><th className="px-3 py-2">Mulai</th><th className="px-3 py-2">Selesai</th><th className="px-3 py-2">Lokasi</th><th className="px-3 py-2 min-w-[220px]">Petugas</th><th className="px-3 py-2">Koordinator</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {preview.map((r, i) => (
-                      <tr key={i} data-testid={`jadwal-preview-row-${i}`}>
+                      <tr key={i} data-testid={`jadwal-preview-row-${i}`} className="align-top">
                         <td className="px-3 py-2 font-medium">{r.nama_kegiatan}</td>
                         <td className="px-3 py-2 font-mono-code">{r.tanggal_mulai}</td>
                         <td className="px-3 py-2 font-mono-code">{r.tanggal_selesai}</td>
                         <td className="px-3 py-2">{r.lokasi}</td>
-                        <td className="px-3 py-2">{r.pegawai}</td>
+                        <td className="px-3 py-2">
+                          <div className="flex flex-wrap items-center gap-1">
+                            {(r.pegawai_ids || []).map((pid) => (
+                              <span key={pid} className="inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                {pMap[pid] || pid}
+                                <button onClick={() => togglePreviewPegawai(i, pid)} className="hover:text-emerald-900" data-testid={`preview-remove-pegawai-${i}-${pid}`}><X size={11} /></button>
+                              </span>
+                            ))}
+                            <Popover>
+                              <PopoverTrigger asChild>
+                                <button className="inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded border border-slate-300 text-slate-600 hover:bg-slate-50" data-testid={`preview-add-pegawai-${i}`}>
+                                  <Users size={11} /> Pilih Petugas
+                                </button>
+                              </PopoverTrigger>
+                              <PopoverContent className="w-64 p-2" align="start">
+                                <p className="text-[11px] text-slate-500 px-1 pb-1">Pilih satu atau beberapa petugas</p>
+                                <div className="max-h-56 overflow-y-auto space-y-0.5">
+                                  {pegawai.map((p) => (
+                                    <label key={p.id} className={`flex items-center gap-2 px-2 py-1.5 rounded-md cursor-pointer text-xs transition-colors ${(r.pegawai_ids || []).includes(p.id) ? "bg-emerald-50 text-emerald-800" : "hover:bg-slate-50 text-slate-700"}`}>
+                                      <input
+                                        type="checkbox"
+                                        checked={(r.pegawai_ids || []).includes(p.id)}
+                                        onChange={() => togglePreviewPegawai(i, p.id)}
+                                        className="accent-emerald-600"
+                                        data-testid={`preview-pegawai-check-${i}-${p.nip || p.id}`}
+                                      />
+                                      <span className="truncate">{p.nama}</span>
+                                    </label>
+                                  ))}
+                                </div>
+                              </PopoverContent>
+                            </Popover>
+                          </div>
+                          {(r.pegawai_unmatched?.length > 0) && (
+                            <p className="text-[10px] text-amber-600 mt-1" data-testid={`preview-unmatched-${i}`}>
+                              Tidak cocok otomatis: {r.pegawai_unmatched.join(", ")} — pilih manual di atas
+                            </p>
+                          )}
+                        </td>
+                        <td className="px-3 py-2">{r.koordinator || <span className="text-slate-300">—</span>}</td>
                       </tr>
                     ))}
                   </tbody>
